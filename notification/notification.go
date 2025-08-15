@@ -3,32 +3,28 @@ package notification
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"log"
+	"runtime"
 
-	wxpusher "github.com/wxpusher/wxpusher-sdk-go"
-	"github.com/wxpusher/wxpusher-sdk-go/model"
+	"github.com/leaftree/autotrader/config"
+	log "github.com/leaftree/autotrader/logger"
+	"github.com/leaftree/autotrader/notification/windows"
+	"github.com/leaftree/autotrader/notification/wxpusher"
 )
 
-const (
-	appToken = "AT_4EhDwiLfZfre2eYGWRfiPoeFkNlbciIW"
-	userID   = "UID_XK7Qp5fAPTxNgszplAEAqgnOTebX"
+var (
+	logger = log.NewLogger("notification")
 )
-
-func SendNotify(msg string) {
-	content := model.NewMessage(appToken).SetContent(msg).AddUId(userID)
-	resp, err := wxpusher.SendMessage(content)
-	if err != nil {
-		fmt.Println(resp, err)
-	}
-}
 
 func SendCreateOrderNotification(ctx context.Context, values map[string]any) {
 	var b bytes.Buffer
-	err := t.Execute(b, values)
+	err := t.Execute(&b, values)
 	if err != nil {
-		log.Println("generate create order notification failed: ", err)
+		logger.Errorf("generate create order notification failed: ", err)
 		return
 	}
-	SendNotify(b.String())
+	wxpusher.SendNotify(b.String())
+
+	if runtime.GOOS == "windows" && config.GetConfig().Notification.Windows == "on" {
+		windows.SendNotify(b.String())
+	}
 }

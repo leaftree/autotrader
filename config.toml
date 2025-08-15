@@ -1,3 +1,18 @@
 [gateio]
     key = "cd33d8de588cf8d71459a770f5472ee7"
     secret = "06df221edc8e2c5772b960ae1aac9e5be4a8fce9ebc61b1b535282d538f15728"
+
+[wxpusher]
+    app_token = "AT_4EhDwiLfZfre2eYGWRfiPoeFkNlbciIW"
+    user_id   = "UID_XK7Qp5fAPTxNgszplAEAqgnOTebX"
+
+[notification]
+    windows = "on"
+
+[strategy]
+    rmi = false
+    suppertrend = true
+    agg = false
+
+[logger]
+    level = "debug"

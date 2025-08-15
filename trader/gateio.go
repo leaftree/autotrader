@@ -3,19 +3,22 @@ package trader
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
-
-	"github.com/leaftree/autotrader/types"
 
 	"github.com/antihax/optional"
 	gateapi "github.com/gateio/gateapi-go/v6"
+	"github.com/leaftree/autotrader/config"
+	log "github.com/leaftree/autotrader/logger"
+	"github.com/leaftree/autotrader/types"
 	"github.com/leaftree/autotrader/util"
 )
 
 const (
-	settle    = "USDT"
-	timeframe = "5m"
+	settle = "usdt"
+)
+
+var (
+	logger = log.NewLogger("gateio")
 )
 
 type gateioTrader struct {
@@ -29,8 +32,9 @@ func NewGateIOTrader() Trader {
 func newGateIOTrader() *gateioTrader {
 	cfg := gateapi.NewConfiguration()
 	cfg.BasePath = "https://api.gateio.ws/api/v4"
-	cfg.Key = viper.GetString("api_key")
-	cfg.Secret = viper.GetString("api_secret")
+	//cfg.Debug = true
+	cfg.Key = config.GetConfig().GateIO.Key
+	cfg.Secret = config.GetConfig().GateIO.Secret
 	client := gateapi.NewAPIClient(cfg)
 	return &gateioTrader{
 		client: client,
@@ -38,13 +42,14 @@ func newGateIOTrader() *gateioTrader {
 }
 
 // 获取K线数据
-func (gt *gateioTrader) QueryCandles(ctx context.Context, contract string, limit int) ([]types.Candle, error) {
-	// 获取K线数据
-	candles, _, err := gt.client.FuturesApi.ListFuturesCandlesticks(ctx, settle, contract, &gateapi.ListFuturesCandlesticksOpts{
+func (gt *gateioTrader) QueryCandles(ctx context.Context, contract string, timeframe string, limit int) ([]types.Candle, error) {
+	opts := gateapi.ListFuturesCandlesticksOpts{
 		Limit:    optional.NewInt32(int32(limit)),
 		Interval: optional.NewString(timeframe),
-	})
+	}
 
+	// 获取K线数据
+	candles, _, err := gt.client.FuturesApi.ListFuturesCandlesticks(ctx, settle, contract, &opts)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +82,11 @@ func checkCandle(data ...float64) error {
 	return nil
 }
 
-func (gt *gateioTrader) ClosePosition(ctx context.Context) error {}
+func (gt *gateioTrader) CalcPositionSize(ctx context.Context) (int64, error) {
+	return 1, nil
+}
+
+func (gt *gateioTrader) ClosePosition(ctx context.Context) error { return nil }
 
 func (gt *gateioTrader) CreateOrder(ctx context.Context, order *types.Order) error {
 	forder := gateapi.FuturesOrder{
@@ -92,11 +101,11 @@ func (gt *gateioTrader) CreateOrder(ctx context.Context, order *types.Order) err
 		forder.Size = -order.Size
 	}
 
-	_, _, err := gt.client.FuturesApi.CreateFuturesOrder(ctx, "usdt", forder, nil)
+	_, _, err := gt.client.FuturesApi.CreateFuturesOrder(ctx, settle, forder, nil)
 	if err != nil {
-		log.Printf("create order failed: %v, price=%v, size=%v", err, order.Price, order.Size)
+		logger.Errorf("create order failed: %v, price=%v, size=%v", err, order.Price, order.Size)
 	} else {
-		log.Printf("create order successful, price=%v, size=%v", order.Price, order.Size)
+		logger.Infof("create order successful, price=%v, size=%v", order.Price, order.Size)
 	}
 	return err
 }

@@ -37,6 +37,7 @@ type SideType int
 const (
 	SideTypeLong SideType = iota + 1
 	SideTypeShort
+	SideTypeNone
 )
 
 func (st SideType) IsLong() bool {
@@ -57,8 +58,8 @@ func (st SideType) String() string {
 type DecisionType int64 // 决策类型
 
 const (
-	DecisionLong    DecisionType = iota + 1 // 多仓
-	DecisionShort                           // 空仓
-	DecisionClose                           // 平仓
-	DecisionNothing                         // 无操作
+	DecisionLong  DecisionType = iota + 1 // 多仓
+	DecisionShort                         // 空仓
+	DecisionClose                         // 平仓
+	DecisionNone                          // 无操作
 )

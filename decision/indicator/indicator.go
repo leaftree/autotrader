@@ -1,10 +1,17 @@
 package indicator
 
 import (
-	"log"
-
+	log "github.com/leaftree/autotrader/logger"
 	"github.com/leaftree/autotrader/types"
 )
+
+var (
+	logger = log.NewLogger("indicator")
+)
+
+type Indicator interface {
+	Process([]types.Candle) types.DecisionType
+}
 
 // 组合所有指标计算
 func AggIndicators(candles []types.Candle) []types.Indicators {
@@ -26,7 +33,9 @@ func AggIndicators(candles []types.Candle) []types.Indicators {
 
 	// 确保有足够数据
 	if len(candles) < maxPeriod*2 {
-		log.Fatal("Insufficient data for indicator calculation")
+		logger.Debugf("candles: %v\n len(candels)=%d maxperiod*2=%d", candles, len(candles), maxPeriod*2)
+		logger.Error("Insufficient data for indicator calculation")
+		return nil
 	}
 
 	// 计算各项指标

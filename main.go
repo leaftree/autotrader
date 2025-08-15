@@ -2,20 +2,27 @@ package main
 
 import (
 	"context"
-	"log"
 	"os"
 	"time"
 
+	"github.com/leaftree/autotrader/config"
 	"github.com/leaftree/autotrader/decision"
-	"github.com/leaftree/autotrader/decision/indicator"
+	"github.com/leaftree/autotrader/decision/risk"
+	log "github.com/leaftree/autotrader/logger"
 	tr "github.com/leaftree/autotrader/trader"
 	"github.com/leaftree/autotrader/types"
 )
 
-var trader tr.Trader
+// TODO 多个逻辑需要使用 K line 做分析，结构修改成任务式，独立进程获取 K 线，异步通知分析逻辑
+
+var (
+	trader tr.Trader
+	logger = log.NewLoggerW("main", os.Stdout, os.Stdout, os.Stderr, os.Stderr)
+)
 
 func init() {
 	// TODO init config
+	config.Init()
 	// TODO init logger
 	trader = tr.NewTrader("gateio")
 }
@@ -33,12 +40,14 @@ const (
 	SETTLE     = "usdt" // 结算货币
 	CONTRACT   = "ETH_USDT"
 	INTERVAL   = "5m" // K线间隔
+	MaxLines   = 100  // K线数量
+	KLineSize  = 50
 )
 
 // 开多单
 func openLongPosition(ctx context.Context, price float64) {
 	// 设置订单参数
-	size := calculatePositionSize(price) // 计算仓位大小
+	size, _ := trader.CalcPositionSize(ctx) // 计算仓位大小
 
 	err := trader.CreateOrder(ctx, &types.Order{
 		Contract: CONTRACT,
@@ -48,17 +57,17 @@ func openLongPosition(ctx context.Context, price float64) {
 	})
 
 	if err != nil {
-		log.Printf("Error opening long position: %v", err)
+		logger.Errorf("Error opening long position: %v", err)
 		return
 	}
-	log.Printf("Opened long position at %.2f, size: %d", price, size)
+	logger.Infof("Opened long position at %.2f, size: %d", price, size)
 }
 
 // 开空单
 func openShortPosition(ctx context.Context, price float64) {
 
 	// 设置订单参数 (负值表示空单)
-	size := calculatePositionSize(price)
+	size, _ := trader.CalcPositionSize(ctx)
 
 	// 发送订单
 	err := trader.CreateOrder(ctx, &types.Order{
@@ -68,10 +77,10 @@ func openShortPosition(ctx context.Context, price float64) {
 		Side:     types.SideTypeShort,
 	})
 	if err != nil {
-		log.Printf("Error opening short position: %v", err)
+		logger.Errorf("Error opening short position: %v", err)
 		return
 	}
-	log.Printf("Opened short position at %.2f, size: %d", price, size)
+	logger.Infof("Opened short position at %.2f, size: %d", price, size)
 }
 
 // 计算仓位大小 (简化版)
@@ -81,81 +90,65 @@ func calculatePositionSize(price float64) int64 {
 	return 1
 }
 
-// 交易决策函数
-func makeTradingDecision(ctx context.Context, indicators []types.Indicators) {
-	if len(indicators) < 2 {
-		log.Println("Not enough indicators for decision")
-		return
-	}
-
-	current := indicators[len(indicators)-1]
-	prev := indicators[len(indicators)-2]
-
-	log.Printf("Current Indicators: Trend=%s, RSI=%.2f, Price=%.2f, BollUpper=%.2f, BollLower=%.2f",
-		current.SuperTrendTrend, current.RSI, current.Price, current.BollUpper, current.BollLower)
-
-	// 多单开仓条件
-	if current.SuperTrendTrend == "up" && // 超级趋势向上
-		current.RSI > 30 && prev.RSI <= 30 && // RSI从超卖区回升
-		current.Price > current.BollLower { // 价格突破布林下轨
-		log.Println("LONG signal detected")
-		openLongPosition(ctx, current.Price)
-		return
-	}
-
-	// 空单开仓条件
-	if current.SuperTrendTrend == "down" && // 超级趋势向下
-		current.RSI < 70 && prev.RSI >= 70 && // RSI从超买区回落
-		current.Price < current.BollUpper { // 价格跌破布林上轨
-		log.Println("SHORT signal detected")
-		openShortPosition(ctx, current.Price)
-		return
-	}
-
-	log.Println("No trading signal detected")
-}
-
-// 主循环
-func main() {
+func mainLoop() {
 	ctx := context.Background()
-	// 设置日志
-	logFile, err := os.OpenFile("eth_trading.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatal("Failed to open log file:", err)
-	}
-	defer logFile.Close()
-	log.SetOutput(logFile)
-
-	log.Println("Starting ETH trading bot...")
-
-	// 主循环
 	for {
 		// 获取最新100根K线
-		candles, err := trader.QueryCandles(ctx, "ETH_USDT", 100)
+		candles, err := trader.QueryCandles(ctx, CONTRACT, INTERVAL, KLineSize)
 		if err != nil {
-			log.Printf("Error fetching candles: %v", err)
+			logger.Errorf("Error fetching candles: %v", err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
 
-		// 计算指标
-		indicators := indicator.AggIndicators(candles)
-
-		// 执行交易决策
-		dec := decision.MakeTradingDecision(ctx, indicators)
+		dec := decision.MakeTradingDecision(ctx, candles)
+		price := candles[len(candles)-1].Low
 
 		switch dec {
 		case types.DecisionLong:
-			trader.CreateOrder(ctx, &types.Order{})
+			if has, _ := risk.HasPosition(ctx, CONTRACT); has {
+				continue
+			}
+			trader.CreateOrder(ctx, &types.Order{Contract: CONTRACT, Price: price, Side: types.SideTypeLong, Size: 1})
+			risk.PositionType = types.SideTypeLong
 		case types.DecisionShort:
-			trader.CreateOrder(ctx, &types.Order{})
+			if has, _ := risk.HasPosition(ctx, CONTRACT); has {
+				continue
+			}
+			trader.CreateOrder(ctx, &types.Order{Contract: CONTRACT, Price: price, Side: types.SideTypeShort, Size: 1})
+			risk.PositionType = types.SideTypeShort
 		case types.DecisionClose:
 			trader.ClosePosition(ctx)
+			risk.PositionType = types.SideTypeNone
 		default:
-			log.Printf("decision nothing todo")
+			logger.Info("decision nothing todo")
 		}
 
 		// 等待5second(与K线间隔匹配)
 		time.Sleep(5 * time.Second)
 	}
+}
+
+// XXX
+func sendNotify(ctx context.Context) {
+	trader.CreateOrder(ctx, &types.Order{Price: 100, Side: types.SideTypeLong, Size: 1})
+}
+
+// 主循环
+func main() {
+	// 设置日志
+	//logFile, err := os.OpenFile("eth_trading.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	//if err != nil {
+	//	log.Fatal("Failed to open log file:", err)
+	//}
+	//defer logFile.Close()
+	//log.SetOutput(logFile)
+
+	logger.Info("Starting ETH trading bot...")
+
+	// 主循环
+	mainLoop()
+	//sendNotify(context.Background())
+
+	time.Sleep(2 * time.Second)
 }
